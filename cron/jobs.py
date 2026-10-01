@@ -860,6 +860,7 @@ def create_job(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     script: Optional[str] = None,
+    post_script: Optional[str] = None,
     context_from: Optional[Union[str, List[str]]] = None,
     enabled_toolsets: Optional[List[str]] = None,
     workdir: Optional[str] = None,
@@ -889,6 +890,11 @@ def create_job(
                 change-detection pattern). Paths resolve under
                 ~/.hermes/scripts/; ``.sh`` / ``.bash`` files run via bash,
                 anything else via Python.
+        post_script: Optional trusted script that runs after the agent/script
+                finishes and before delivery. It receives one JSON object on
+                stdin describing the job outcome. A non-zero exit makes the
+                cron run fail closed. The path uses the same
+                ~/.hermes/scripts/ sandbox as ``script``.
         context_from: Optional job ID (or list of job IDs) whose most recent output
                       is injected into the prompt as context before each run.
                       Useful for chaining cron jobs: job A finds data, job B processes it.
@@ -936,6 +942,8 @@ def create_job(
     normalized_base_url = _normalize_job_optional_text(base_url, strip_trailing_slash=True)
     normalized_script = str(script).strip() if isinstance(script, str) else None
     normalized_script = normalized_script or None
+    normalized_post_script = str(post_script).strip() if isinstance(post_script, str) else None
+    normalized_post_script = normalized_post_script or None
     normalized_toolsets = [str(t).strip() for t in enabled_toolsets if str(t).strip()] if enabled_toolsets else None
     normalized_toolsets = normalized_toolsets or None
     normalized_workdir = _normalize_workdir(workdir)
@@ -984,6 +992,7 @@ def create_job(
         "model_snapshot": model_snapshot,
         "base_url": normalized_base_url,
         "script": normalized_script,
+        "post_script": normalized_post_script,
         "no_agent": normalized_no_agent,
         "context_from": context_from,
         "schedule": parsed_schedule,
