@@ -512,6 +512,8 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
     }
     if job.get("script"):
         result["script"] = job["script"]
+    if job.get("post_script"):
+        result["post_script"] = job["post_script"]
     if job.get("no_agent"):
         result["no_agent"] = True
     if job.get("enabled_toolsets"):
@@ -582,6 +584,7 @@ def cronjob(
     base_url: Optional[str] = None,
     reason: Optional[str] = None,
     script: Optional[str] = None,
+    post_script: Optional[str] = None,
     context_from: Optional[Union[str, List[str]]] = None,
     enabled_toolsets: Optional[List[str]] = None,
     workdir: Optional[str] = None,
@@ -625,6 +628,11 @@ def cronjob(
                 if script_error:
                     return tool_error(script_error, success=False)
 
+            if post_script:
+                post_script_error = _validate_cron_script_path(post_script)
+                if post_script_error:
+                    return tool_error(post_script_error, success=False)
+
             # Validate context_from references existing jobs
             if context_from:
                 from cron.jobs import get_job as _get_job
@@ -649,6 +657,7 @@ def cronjob(
                 provider=_normalize_optional_job_value(provider),
                 base_url=_normalize_optional_job_value(base_url, strip_trailing_slash=True),
                 script=_normalize_optional_job_value(script),
+                post_script=_normalize_optional_job_value(post_script),
                 context_from=context_from,
                 enabled_toolsets=enabled_toolsets or None,
                 workdir=_normalize_optional_job_value(workdir),
@@ -786,6 +795,12 @@ def cronjob(
                     if script_error:
                         return tool_error(script_error, success=False)
                 updates["script"] = _normalize_optional_job_value(script) if script else None
+            if post_script is not None:
+                if post_script:
+                    post_script_error = _validate_cron_script_path(post_script)
+                    if post_script_error:
+                        return tool_error(post_script_error, success=False)
+                updates["post_script"] = _normalize_optional_job_value(post_script) if post_script else None
             if context_from is not None:
                 # Empty string / empty list clears the field; otherwise validate
                 # each referenced job exists before storing. Normalized to a list
@@ -925,6 +940,10 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
             "script": {
                 "type": "string",
                 "description": f"Optional path to a script that runs each tick. In the default mode its stdout is injected into the agent's prompt as context (data-collection / change-detection pattern). With no_agent=True, the script IS the job and its stdout is delivered verbatim (classic watchdog pattern). Relative paths resolve under {display_hermes_home()}/scripts/. ``.sh``/``.bash`` extensions run via bash, everything else via Python. On update, pass empty string to clear."
+            },
+            "post_script": {
+                "type": "string",
+                "description": f"Optional trusted post-run script. It executes after the job body finishes and before delivery, receiving one JSON object on stdin with schema, job identity, run timestamps, success, finalResponse, and error. A non-zero exit makes the cron run fail closed. The path is restricted to {display_hermes_home()}/scripts/ using the same containment checks as script. On update, pass empty string to clear."
             },
             "no_agent": {
                 "type": "boolean",
