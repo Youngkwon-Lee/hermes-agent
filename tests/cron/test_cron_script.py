@@ -526,6 +526,86 @@ class TestCronjobToolScriptValidation:
         assert result["success"] is False
 
 
+
+class TestPostScriptField:
+    def test_create_update_and_list_post_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from cron.jobs import create_job, get_job
+        from tools.cronjob_tools import cronjob
+
+        created = create_job(
+            prompt="Review",
+            schedule="every 1h",
+            post_script="receipt.py",
+        )
+        assert created["post_script"] == "receipt.py"
+        assert get_job(created["id"])["post_script"] == "receipt.py"
+
+        tool_created = json.loads(
+            cronjob(
+                action="create",
+                schedule="every 1h",
+                prompt="Review",
+                post_script="receipt.py",
+            )
+        )
+        assert tool_created["success"] is True
+        assert tool_created["job"]["post_script"] == "receipt.py"
+
+        updated = json.loads(
+            cronjob(
+                action="update",
+                job_id=tool_created["job_id"],
+                post_script="receipt-v2.py",
+            )
+        )
+        assert updated["success"] is True
+        assert updated["job"]["post_script"] == "receipt-v2.py"
+
+        cleared = json.loads(
+            cronjob(
+                action="update",
+                job_id=tool_created["job_id"],
+                post_script="",
+            )
+        )
+        assert cleared["success"] is True
+        assert "post_script" not in cleared["job"]
+
+    def test_post_script_path_validation_matches_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        result = json.loads(
+            cronjob(
+                action="create",
+                schedule="every 1h",
+                prompt="Review",
+                post_script="/tmp/escape.py",
+            )
+        )
+        assert result["success"] is False
+        assert "relative" in result["error"].lower() or "absolute" in result["error"].lower()
+
+
+def test_run_job_script_accepts_stdin_payload(cron_env):
+    from cron.scheduler import _run_job_script
+
+    script = cron_env / "scripts" / "stdin_probe.py"
+    script.write_text(
+        "import sys\n"
+        "payload = sys.stdin.read()\n"
+        "print(payload)\n",
+        encoding="utf-8",
+    )
+
+    success, output = _run_job_script(
+        "stdin_probe.py",
+        input_text='{"schema":"hermes-cron-post-script/v1"}',
+    )
+    assert success is True
+    assert output == '{"schema":"hermes-cron-post-script/v1"}'
+
 class TestRunJobEnvVarCleanup:
     """Test that run_job() env vars are cleaned up even on early failure."""
 
