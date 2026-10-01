@@ -56,6 +56,15 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         ),
     )
     cron_create.add_argument(
+        "--post-script",
+        dest="post_script",
+        help=(
+            "Trusted script under ~/.hermes/scripts/ that runs after the job "
+            "finishes and before delivery. Receives a JSON outcome object on "
+            "stdin; non-zero exit marks the cron run failed."
+        ),
+    )
+    cron_create.add_argument(
         "--no-agent",
         dest="no_agent",
         action="store_true",
@@ -110,6 +119,14 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
             "Path to a script under ~/.hermes/scripts/. Pass empty string to clear. "
             "With --no-agent the script IS the job; otherwise its stdout is "
             "injected into the agent's prompt each run."
+        ),
+    )
+    cron_edit.add_argument(
+        "--post-script",
+        dest="post_script",
+        help=(
+            "Trusted post-run script under ~/.hermes/scripts/. Pass empty "
+            "string to clear. Non-zero exit marks the cron run failed."
         ),
     )
     cron_edit.add_argument(
