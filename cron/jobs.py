@@ -1581,6 +1581,7 @@ _CREATE_FIELD_NORMALIZERS: Dict[str, Callable[[Any], Any]] = {
     "provider": _normalize_job_optional_text,
     "base_url": _normalize_base_url,
     "script": _normalize_job_optional_text,
+    "post_script": _normalize_job_optional_text,
     "monitor_script": _normalize_job_optional_text,
     "monitor_url": _normalize_job_optional_text,
     "enabled_toolsets": lambda v: _normalize_str_list(v) if v else None,
@@ -1591,6 +1592,7 @@ _CREATE_FIELD_NORMALIZERS: Dict[str, Callable[[Any], Any]] = {
 }
 _UPDATE_FIELD_NORMALIZERS: Dict[str, Callable[[Any], Any]] = {
     "workdir": lambda v: None if v in {None, "", False} else _normalize_workdir(v),
+    "post_script": _normalize_job_optional_text,
     "monitor_script": _normalize_job_optional_text,
     "monitor_url": _normalize_job_optional_text,
     "reasoning_effort": _normalize_reasoning_effort,
@@ -1707,6 +1709,7 @@ def create_job(
     failure_deliver: Optional[str] = None,
     paused: bool = False,
     paused_reason: Optional[str] = None,
+    post_script: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a new cron job and return the stored record.
 
@@ -1715,7 +1718,9 @@ def create_job(
     delivered verbatim, requires ``script``). context_from: job id(s) whose latest output is
     injected. workdir: absolute cwd for tools/scripts. monitor_script/monitor_url: cheap monitor
     source run FIRST each tick; unchanged output suppresses the agent run (mutually exclusive,
-    incompatible with ``no_agent``). reasoning_effort: per-job pin; capability NOT validated."""
+    incompatible with ``no_agent``). post_script: trusted script under HERMES_HOME/scripts that
+    runs after execution and before delivery with a bounded JSON outcome envelope on stdin.
+    reasoning_effort: per-job pin; capability NOT validated."""
     if not isinstance(paused, bool):
         raise ValueError("paused must be a boolean.")
     if paused_reason is not None and not isinstance(paused_reason, str):
@@ -1802,7 +1807,7 @@ def create_job(
     # jobs.
     for key, value in (
         ("attach_to_session", normalized_attach), ("reasoning_effort", normalized_reasoning_effort),
-        ("failure_deliver", f["failure_deliver"]),
+        ("failure_deliver", f["failure_deliver"]), ("post_script", f["post_script"]),
     ):
         if value is not None:
             job[key] = value
@@ -1973,6 +1978,8 @@ def update_job(job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
         _normalize_job_updates(job, updates)
         previous_inference_axes = _normalized_inference_axes(job)
         updated = _apply_skill_fields({**job, **updates})
+        if "post_script" in updates and updates["post_script"] is None:
+            updated.pop("post_script", None)
         _reject_terminal_activation(job, updated, job_id)
         # Re-check on the MERGED record; scoped to changed fields so legacy records keep loading.
         if {"monitor_script", "monitor_url", "no_agent", "script"}.intersection(updates):
