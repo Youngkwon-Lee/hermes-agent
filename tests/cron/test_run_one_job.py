@@ -10,6 +10,8 @@ The first test characterizes the sequence as driven through `tick()` (proving
 the extraction didn't change `tick`'s behavior); the rest unit-test the
 extracted helper directly.
 """
+import json
+
 import cron.scheduler as s
 
 
@@ -117,3 +119,57 @@ def test_run_one_job_exception_marks_failure(monkeypatch):
 
     assert ok is False
     assert marks == [("j6", False)]
+
+
+def test_run_one_job_post_script_runs_before_save_and_delivery(monkeypatch):
+    calls = _patch_pipeline(monkeypatch)
+
+    def fake_post_script(path, *, input_text=None):
+        calls.append(("post_script", path, input_text))
+        return True, "receipt written"
+
+    monkeypatch.setattr(s, "_run_job_script", fake_post_script)
+
+    ok = s.run_one_job(
+        {"id": "j7", "name": "post", "post_script": "receipt.py"}
+    )
+
+    assert ok is True
+    kinds = [c[0] for c in calls]
+    assert kinds == ["run_job", "post_script", "save", "deliver", "mark"]
+    payload = json.loads(calls[1][2])
+    assert payload["schema"] == "hermes-cron-post-script/v1"
+    assert payload["job"] == {"id": "j7", "name": "post"}
+    assert payload["success"] is True
+    assert payload["finalResponse"] == "final response"
+    assert payload["error"] is None
+    assert payload["runStartedAt"]
+    assert payload["runFinishedAt"]
+
+
+def test_run_one_job_post_script_failure_fails_closed_before_delivery(monkeypatch):
+    calls = _patch_pipeline(monkeypatch)
+
+    def fake_post_script(path, *, input_text=None):
+        calls.append(("post_script", path))
+        return False, "receipt writer failed"
+
+    delivered = []
+
+    def fake_deliver(job, content, adapters=None, loop=None):
+        delivered.append(content)
+        calls.append(("deliver", job["id"]))
+        return None
+
+    monkeypatch.setattr(s, "_run_job_script", fake_post_script)
+    monkeypatch.setattr(s, "_deliver_result", fake_deliver)
+
+    ok = s.run_one_job(
+        {"id": "j8", "name": "post-fail", "post_script": "receipt.py"}
+    )
+
+    assert ok is True
+    mark = [c for c in calls if c[0] == "mark"][0]
+    assert mark == ("mark", "j8", False)
+    assert delivered
+    assert "failed" in delivered[0].lower()

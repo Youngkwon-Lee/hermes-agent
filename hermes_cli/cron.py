@@ -329,6 +329,7 @@ def cron_create(args):
         skill=getattr(args, "skill", None),
         skills=_normalize_skills(getattr(args, "skill", None), getattr(args, "skills", None)),
         script=getattr(args, "script", None),
+        post_script=getattr(args, "post_script", None),
         workdir=getattr(args, "workdir", None),
         no_agent=getattr(args, "no_agent", False) or None,
     )
@@ -343,6 +344,8 @@ def cron_create(args):
     job_data = result.get("job", {})
     if job_data.get("script"):
         print(f"  Script: {job_data['script']}")
+    if job_data.get("post_script"):
+        print(f"  Post script: {job_data['post_script']}")
     if job_data.get("no_agent"):
         print("  Mode: no-agent (script stdout delivered directly)")
     if job_data.get("workdir"):
@@ -392,6 +395,7 @@ def cron_edit(args):
         repeat=getattr(args, "repeat", None),
         skills=final_skills,
         script=getattr(args, "script", None),
+        post_script=getattr(args, "post_script", None),
         workdir=getattr(args, "workdir", None),
         no_agent=getattr(args, "no_agent", None),
     )
@@ -409,6 +413,8 @@ def cron_edit(args):
         print("  Skills: none")
     if updated.get("script"):
         print(f"  Script: {updated['script']}")
+    if updated.get("post_script"):
+        print(f"  Post script: {updated['post_script']}")
     if updated.get("no_agent"):
         print("  Mode: no-agent (script stdout delivered directly)")
     if updated.get("workdir"):

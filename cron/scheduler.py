@@ -1545,7 +1545,7 @@ def _get_script_timeout() -> int:
     return _DEFAULT_SCRIPT_TIMEOUT
 
 
-def _run_job_script(script_path: str) -> tuple[bool, str]:
+def _run_job_script(script_path: str, *, input_text: str | None = None) -> tuple[bool, str]:
     """Execute a cron job's data-collection script and capture its output.
 
     Scripts must reside within HERMES_HOME/scripts/.  Both relative and
@@ -1571,6 +1571,9 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
         script_path: Path to the script.  Relative paths are resolved
             against HERMES_HOME/scripts/.  Absolute and ~-prefixed paths
             are also validated to ensure they stay within the scripts dir.
+        input_text: Optional UTF-8 text sent to the script on stdin. Pre-run
+            scripts omit this; post-run scripts receive a bounded JSON result
+            envelope through this channel rather than environment variables.
 
     Returns:
         (success, output) — on failure *output* contains the error message so the
@@ -1633,6 +1636,7 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
         popen_kwargs = {"creationflags": windows_hide_flags()} if sys.platform == "win32" else {}
         result = subprocess.run(
             argv,
+            input=input_text,
             capture_output=True,
             text=True,
             timeout=script_timeout,
@@ -2770,7 +2774,51 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
     failure is recorded via ``mark_job_run``), False only if processing raised.
     """
     try:
+        run_started_at = _hermes_now().isoformat()
         success, output, final_response, error = run_job(job)
+        run_finished_at = _hermes_now().isoformat()
+
+        post_script = str(job.get("post_script") or "").strip()
+        if post_script:
+            post_payload = json.dumps(
+                {
+                    "schema": "hermes-cron-post-script/v1",
+                    "job": {
+                        "id": str(job.get("id") or ""),
+                        "name": str(job.get("name") or job.get("id") or "cron job"),
+                    },
+                    "runStartedAt": run_started_at,
+                    "runFinishedAt": run_finished_at,
+                    "success": bool(success),
+                    "finalResponse": final_response or "",
+                    "error": error,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if len(post_payload.encode("utf-8")) > 64 * 1024:
+                post_ok = False
+                post_output = "Post-script payload exceeded 64 KiB"
+            else:
+                post_ok, post_output = _run_job_script(
+                    post_script,
+                    input_text=post_payload,
+                )
+            if not post_ok:
+                post_error = f"Post-script failed: {post_output}"
+                error = f"{error}; {post_error}" if error else post_error
+                success = False
+                output = (
+                    f"{output.rstrip()}\n\n"
+                    "## Post Script\n\n"
+                    f"{post_error}\n"
+                )
+            elif post_output:
+                logger.info(
+                    "Job '%s': post-script completed: %s",
+                    job["id"],
+                    post_output[:500],
+                )
 
         output_file = save_job_output(job["id"], output)
         if verbose:
