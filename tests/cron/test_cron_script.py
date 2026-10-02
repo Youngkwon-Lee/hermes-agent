@@ -71,6 +71,27 @@ class TestJobScriptField:
         assert updated["script"] == "/new/script.py"
 
 
+class TestPostScriptField:
+    """Core storage contract for scheduler-owned post-run hooks."""
+
+    def test_create_update_and_clear_post_script(self, cron_env):
+        from cron.jobs import create_job, get_job, update_job
+
+        job = create_job(
+            prompt="Review",
+            schedule="every 1h",
+            post_script="receipt.py",
+        )
+        assert job["post_script"] == "receipt.py"
+        assert get_job(job["id"])["post_script"] == "receipt.py"
+
+        updated = update_job(job["id"], {"post_script": "receipt-v2.py"})
+        assert updated["post_script"] == "receipt-v2.py"
+
+        cleared = update_job(job["id"], {"post_script": ""})
+        assert "post_script" not in cleared
+
+
 def test_cronjob_tool_rejects_stale_past_one_shot(cron_env, monkeypatch):
     from tools.cronjob_tools import cronjob
 
@@ -107,6 +128,23 @@ class TestRunJobScript:
         assert success is True
         assert output == "relative works"
 
+
+    def test_script_accepts_stdin_payload(self, cron_env):
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "stdin_probe.py"
+        script.write_text(
+            "import sys\n"
+            "print(sys.stdin.read())\n",
+            encoding="utf-8",
+        )
+
+        success, output = _run_job_script(
+            "stdin_probe.py",
+            input_text='{"schema":"hermes-cron-post-script/v1"}',
+        )
+        assert success is True
+        assert output == '{"schema":"hermes-cron-post-script/v1"}'
 
     def test_script_subprocess_env_sanitized(self, cron_env, monkeypatch):
         """Cron scripts must not inherit Hermes provider env (SECURITY.md §2.3)."""
