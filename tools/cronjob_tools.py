@@ -547,6 +547,7 @@ def _action_create(a: Dict[str, Any]) -> str:
     error = (
         (prompt and _scan_cron_prompt(prompt))
         or (script and _validate_cron_script_path(script))
+        or (a["post_script"] and _validate_cron_script_path(a["post_script"]))
         or (a["monitor_script"] and _validate_cron_script_path(a["monitor_script"]))
         # A model-supplied base_url must not route a named provider's stored credential
         # to an attacker endpoint.
@@ -571,7 +572,9 @@ def _action_create(a: Dict[str, Any]) -> str:
             deliver=_resolve_cron_context_deliver(deliver), origin=_origin_from_env(), skills=canonical_skills,
             model=_normalize_optional_job_value(a["model"]), provider=_normalize_optional_job_value(a["provider"]),
             base_url=_normalize_optional_job_value(a["base_url"], strip_trailing_slash=True),
-            script=_normalize_optional_job_value(script), context_from=context_from,
+            script=_normalize_optional_job_value(script),
+            post_script=_normalize_optional_job_value(a["post_script"]),
+            context_from=context_from,
             enabled_toolsets=a["enabled_toolsets"] or None, workdir=_normalize_optional_job_value(a["workdir"]),
             no_agent=_no_agent, attach_to_session=a["attach_to_session"],
             monitor_script=_normalize_optional_job_value(a["monitor_script"]),
@@ -737,9 +740,13 @@ def _update_core_fields(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[st
 
 
 def _update_script_fields(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[str, Any]) -> Optional[str]:
-    """script / monitor_script / monitor_url (empty string clears); returns an error string or None."""
+    """script / post_script / monitor_script / monitor_url (empty string clears)."""
     monitor_script, monitor_url = a["monitor_script"], a["monitor_url"]
-    for field, value in (("script", a["script"]), ("monitor_script", monitor_script)):
+    for field, value in (
+        ("script", a["script"]),
+        ("post_script", a["post_script"]),
+        ("monitor_script", monitor_script),
+    ):
         if value is not None:
             if value:
                 path_error = _validate_cron_script_path(value)
@@ -927,7 +934,8 @@ def cronjob(
     task_id: str = None,
     session_id: Optional[str] = None,
     paused: bool = False,
-    paused_reason: Optional[str] = None) -> str:
+    paused_reason: Optional[str] = None,
+    post_script: Optional[str] = None) -> str:
     """Unified cron job management tool."""
     a = dict(locals())
     del a["task_id"]  # unused but kept for handler signature compatibility
@@ -957,12 +965,21 @@ def _script_description(home: str) -> str:
             "On update, '' clears.")
 
 
+def _post_script_description(home: str) -> str:
+    return (
+        "Optional trusted post-run script. It runs after the job body finishes and before delivery, "
+        "receives one bounded JSON outcome object on stdin, and a non-zero exit fails the cron run. "
+        f"Relative paths resolve under {home}/scripts/ using the same containment checks as script. "
+        "On update, '' clears."
+    )
+
+
 def _cronjob_schema_overrides() -> dict:
-    """Rebuild the ``script`` path hint from the ACTIVE profile at every get_definitions(): the
-    static schema is built once per process, but the multiplexed gateway serves every profile from
-    that process, so a path baked in at import would name the launch profile's home (#95685)."""
+    """Rebuild script path hints from the ACTIVE profile for multiplexed gateways."""
     params = copy.deepcopy(CRONJOB_SCHEMA["parameters"])
-    params["properties"]["script"]["description"] = _script_description(display_hermes_home())
+    home = display_hermes_home()
+    params["properties"]["script"]["description"] = _script_description(home)
+    params["properties"]["post_script"]["description"] = _post_script_description(home)
     return {"parameters": params}
 
 
@@ -1024,6 +1041,10 @@ Jobs run in a fresh session with no current-chat context, so prompts must be sel
                 "type": "string",
                 "description": _script_description("the profile HERMES_HOME")
             },
+            "post_script": {
+                "type": "string",
+                "description": _post_script_description("the profile HERMES_HOME")
+            },
             "monitor": {
                 "type": "string",
                 "description": "Optional change-detector that gates the agent: an http(s) URL (fetched each tick) or a script path (same rules as `script`, run each tick) — cheap, no LLM. Output identical to the previous tick skips the agent run entirely; changed output wakes the agent with a diff injected into the prompt. First tick always runs (baseline). Output must be deterministic (no timestamps) or every tick looks changed. Incompatible with no_agent. On update, '' clears."
@@ -1078,8 +1099,8 @@ def check_cronjob_requirements() -> bool:
 # different model. Programmatic callers of cronjob() itself retain the parameters.
 _HANDLER_FORWARDED_ARGS = (
     "job_id", "prompt", "schedule", "name", "repeat", "deliver", "failure_deliver", "skill", "skills", "reason",
-    "script", "context_from", "continuity", "enabled_toolsets", "workdir", "no_agent", "attach_to_session",
-    "paused_reason", "all")
+    "script", "post_script", "context_from", "continuity", "enabled_toolsets", "workdir", "no_agent",
+    "attach_to_session", "paused_reason", "all")
 
 
 def _cronjob_handler(args, **kw):
