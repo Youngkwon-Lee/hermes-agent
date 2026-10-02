@@ -317,6 +317,7 @@ def _script_argv(path: Path) -> tuple[Optional[list[str]], dict[str, str], Optio
 def _run_job_script(
     script_path: str, workdir: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None,
+    input_text: Optional[str] = None,
 ) -> tuple[bool, str]:
     """Execute a cron job's script and return ``(success, output)``; on failure *output* is the
     error message for the LLM to report. Env goes through ``build_subprocess_env`` (SECURITY.md
@@ -326,7 +327,8 @@ def _run_job_script(
     Args: script_path: Path to the script. Relative paths are resolved against HERMES_HOME/scripts/.
     Absolute and ~-prefixed paths are also validated to ensure they stay within the scripts dir. workdir:
     Optional absolute path to use as the script's cwd. When set, the subprocess runs in this directory
-    instead of the scripts-dir parent. See #69396.
+    instead of the scripts-dir parent. See #69396. input_text: optional UTF-8 text sent once on stdin;
+    post-run hooks use this for a bounded scheduler-owned result envelope.
     """
     path, err = _resolve_script_path(script_path)
     if path is None:
@@ -356,9 +358,17 @@ def _run_job_script(
         # parent (back-compat). NEVER mutate the Python process cwd — that would leak into concurrent
         # gateway sessions (#69396).
         proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            cwd=workdir or str(path.parent), env=env, **popen_kwargs)
+            argv,
+            stdin=subprocess.PIPE if input_text is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=workdir or str(path.parent),
+            env=env,
+            **popen_kwargs,
+        )
         deadline = time.monotonic() + script_timeout
+        pending_input = input_text
         while True:
             # Tree-kill on cancel AND timeout: killpg misses setsid grandchildren (watchdogs,
             # backgrounded shell jobs); kill_process_tree snapshots descendants BEFORE signalling.
@@ -378,9 +388,18 @@ def _run_job_script(
                 # tree-kill (#85147, d6a5cb9725).
                 return False, f"Script timed out after {script_timeout}s: {path}"
             try:
-                stdout_raw, stderr_raw = proc.communicate(timeout=min(0.1, remaining))
+                if pending_input is None:
+                    stdout_raw, stderr_raw = proc.communicate(
+                        timeout=min(0.1, remaining),
+                    )
+                else:
+                    stdout_raw, stderr_raw = proc.communicate(
+                        input=pending_input,
+                        timeout=min(0.1, remaining),
+                    )
                 break
             except subprocess.TimeoutExpired:
+                pending_input = None
                 continue
 
         stdout = (stdout_raw or "").strip()

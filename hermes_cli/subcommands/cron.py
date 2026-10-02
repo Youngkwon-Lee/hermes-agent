@@ -44,6 +44,10 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
             "With --no-agent: the script IS the job and its stdout is "
             "delivered verbatim. .sh/.bash files run via bash, everything "
             "else via Python.")
+    cron_create.add_argument("--post-script", dest="post_script",
+        help="Trusted script under ~/.hermes/scripts/ that runs after the job "
+            "finishes and before delivery. Receives a bounded JSON outcome "
+            "object on stdin; non-zero exit marks the cron run failed.")
     _flag(cron_create, "--no-agent", dest="no_agent", default=False,
         help="Skip the LLM entirely — run --script on schedule and deliver "
             "its stdout directly. Empty stdout = silent. Classic watchdog "
@@ -106,6 +110,9 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         help="Path to a script under ~/.hermes/scripts/. Pass empty string to clear. "
             "With --no-agent the script IS the job; otherwise its stdout is "
             "injected into the agent's prompt each run.")
+    cron_edit.add_argument("--post-script", dest="post_script",
+        help="Trusted post-run script under ~/.hermes/scripts/. Pass empty string "
+            "to clear. Non-zero exit marks the cron run failed.")
     cron_edit.add_argument(
         "--no-agent", dest="no_agent", action="store_const", const=True, default=None,
         help="Enable no-agent mode on this job (requires --script or an "
