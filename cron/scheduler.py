@@ -2811,6 +2811,49 @@ def _deliver_crash_failure(
 
 
 
+_POST_SCRIPT_PAYLOAD_MAX_BYTES = 64 * 1024
+
+
+def _run_post_script(
+    job: dict,
+    *,
+    run_started_at: str,
+    run_finished_at: str,
+    success: bool,
+    final_response: str,
+    error: Optional[str],
+    cancel_event: Optional[_CancelEventLike] = None,
+) -> tuple[bool, str]:
+    """Run the optional scheduler-owned post hook with a bounded outcome envelope on stdin."""
+    post_script = str(job.get("post_script") or "").strip()
+    if not post_script:
+        return True, ""
+
+    payload = json.dumps(
+        {
+            "schema": "hermes-cron-post-script/v1",
+            "job": {
+                "id": str(job.get("id") or ""),
+                "name": str(job.get("name") or job.get("id") or "cron job"),
+            },
+            "runStartedAt": run_started_at,
+            "runFinishedAt": run_finished_at,
+            "success": bool(success),
+            "finalResponse": final_response or "",
+            "error": error,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if len(payload.encode("utf-8")) > _POST_SCRIPT_PAYLOAD_MAX_BYTES:
+        return False, "Post-script payload exceeded 64 KiB"
+    return _run_job_script(
+        post_script,
+        cancel_event=cancel_event,
+        input_text=payload,
+    )
+
+
 def _run_one_job_body(
     job: dict, *, adapters=None, loop=None, verbose: bool = False,
     extra_prompt: Optional[str] = None, fire_claim_lost: Optional[_CancelEventLike] = None,
@@ -2902,6 +2945,7 @@ def _run_one_job_body(
             "execution_id": execution_id}
         if fire_claim_lost is not None:
             _run_kwargs["cancel_event"] = fire_claim_lost
+        run_started_at = _hermes_now().isoformat()
         try:
             success, output, final_response, error = run_job(job, **_run_kwargs)
         except BaseException:
@@ -2910,10 +2954,43 @@ def _run_one_job_body(
             _teardown_deferred()
             raise
 
+        run_finished_at = _hermes_now().isoformat()
+
         if _fire_claim_ownership_lost():
             _teardown_deferred()
             _record_fire_ownership_lost(job["id"], fire_owner, execution_id)
             return True
+
+        if str(job.get("post_script") or "").strip():
+            with _side_effect_fence() as owns_post_script:
+                if not owns_post_script:
+                    _teardown_deferred()
+                    _record_fire_ownership_lost(job["id"], fire_owner, execution_id)
+                    return True
+                post_ok, post_output = _run_post_script(
+                    job,
+                    run_started_at=run_started_at,
+                    run_finished_at=run_finished_at,
+                    success=success,
+                    final_response=final_response,
+                    error=error,
+                    cancel_event=fire_claim_lost,
+                )
+            if _fire_claim_ownership_lost():
+                _teardown_deferred()
+                _record_fire_ownership_lost(job["id"], fire_owner, execution_id)
+                return True
+            if not post_ok:
+                post_error = f"Post-script failed: {post_output}"
+                error = f"{error}; {post_error}" if error else post_error
+                success = False
+                output = f"{output.rstrip()}\n\n## Post Script\n\n{post_error}\n"
+            elif post_output:
+                logger.info(
+                    "Job '%s': post-script completed: %s",
+                    job["id"],
+                    post_output[:500],
+                )
 
         # Agent is still live through delivery; wrap ALL of save/compose/deliver in try/finally so a
         # raise anywhere still tears the deferred agent down.
@@ -3822,7 +3899,8 @@ from cron.scheduler_delivery import (  # noqa: E402
     _resolve_delivery_targets,
 )
 from cron.scheduler_script import (  # noqa: E402
-    _get_session_db_timeout, _run_job_script_with_claim_heartbeat, _start_heartbeat_thread,
+    _get_session_db_timeout, _run_job_script, _run_job_script_with_claim_heartbeat,
+    _start_heartbeat_thread,
 )
 from cron.scheduler_prompt import (  # noqa: E402
     _block_and_pause_job, _build_job_prompt, _guard_job_credential_exfil, _parse_wake_gate,
