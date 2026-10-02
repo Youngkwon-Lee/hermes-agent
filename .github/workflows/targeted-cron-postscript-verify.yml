@@ -1,0 +1,25 @@
+name: Targeted cron post-script verification
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.28"
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install test dependencies
+        run: uv sync --locked --python 3.11 --extra dev
+      - name: Run focused cron tests
+        run: |
+          source .venv/bin/activate
+          pytest -q tests/cron/test_cron_script.py tests/cron/test_run_one_job.py
