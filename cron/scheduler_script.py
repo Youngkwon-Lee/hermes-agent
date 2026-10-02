@@ -388,10 +388,15 @@ def _run_job_script(
                 # tree-kill (#85147, d6a5cb9725).
                 return False, f"Script timed out after {script_timeout}s: {path}"
             try:
-                stdout_raw, stderr_raw = proc.communicate(
-                    input=pending_input,
-                    timeout=min(0.1, remaining),
-                )
+                if pending_input is None:
+                    stdout_raw, stderr_raw = proc.communicate(
+                        timeout=min(0.1, remaining),
+                    )
+                else:
+                    stdout_raw, stderr_raw = proc.communicate(
+                        input=pending_input,
+                        timeout=min(0.1, remaining),
+                    )
                 break
             except subprocess.TimeoutExpired:
                 pending_input = None
